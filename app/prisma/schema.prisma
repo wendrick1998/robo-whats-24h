@@ -1,0 +1,417 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// NextAuth Schema
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          Role      @default(USER)
+  
+  accounts Account[]
+  sessions Session[]
+  stores   Store[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Core Business Models
+model Store {
+  id          String  @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  plan        Plan    @default(BASIC)
+  active      Boolean @default(true)
+  
+  // Owner
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id])
+  
+  // Relations
+  messages           Message[]
+  categories         Category[]
+  products           Product[]
+  suppliers          Supplier[]
+  reminders          Reminder[]
+  reports            Report[]
+  automations        Automation[]
+  settings           StoreSetting[]
+  evolutionInstances EvolutionInstance[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EvolutionInstance {
+  id            String         @id @default(cuid())
+  name          String
+  instanceName  String         @unique
+  baseUrl       String
+  globalApiKey  String
+  instanceToken String
+  status        EvolutionStatus @default(DISCONNECTED)
+  qrCode        String?
+  
+  // Relacionamentos
+  storeId       String
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  // Configurações extras
+  webhookUrl    String?
+  autoConnect   Boolean        @default(true)
+  
+  // Timestamps
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  lastConnected DateTime?
+  
+  @@map("evolution_instances")
+}
+
+model Category {
+  id          String @id @default(cuid())
+  name        String
+  color       String @default("#3b82f6")
+  priority    Int    @default(1)
+  keywords    String[] // Para classificação automática
+  active      Boolean @default(true)
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  messages Message[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([storeId, name])
+}
+
+model Message {
+  id            String      @id @default(cuid())
+  whatsappId    String?     // ID da mensagem no WhatsApp
+  fromNumber    String
+  fromName      String?
+  toNumber      String
+  content       String      @db.Text
+  messageType   MessageType @default(TEXT)
+  direction     Direction
+  status        MessageStatus @default(RECEIVED)
+  isUrgent      Boolean     @default(false)
+  isRead        Boolean     @default(false)
+  
+  // Classificação
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+  confidence Float?    // Confiança da classificação IA
+  
+  // Metadados
+  metadata      Json?
+  receivedAt    DateTime @default(now())
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  reminders MessageReminder[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([storeId, receivedAt])
+  @@index([storeId, status])
+  @@index([fromNumber])
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  name        String
+  code        String? // Código/SKU
+  description String? @db.Text
+  price       Decimal @db.Decimal(10, 2)
+  cost        Decimal? @db.Decimal(10, 2)
+  stock       Int     @default(0)
+  minStock    Int     @default(0)
+  active      Boolean @default(true)
+  
+  // Fornecedor
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  
+  // Metadados
+  brand       String?
+  category    String?
+  unit        String? // unidade, kg, litro, etc
+  barcode     String?
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  priceHistory PriceHistory[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([storeId, code])
+  @@index([storeId, active])
+  @@index([name])
+}
+
+model Supplier {
+  id          String  @id @default(cuid())
+  name        String
+  cnpj        String?
+  email       String?
+  phone       String?
+  address     String?
+  contact     String? // Nome do contato
+  active      Boolean @default(true)
+  
+  // Configurações para integração
+  apiUrl      String?
+  apiKey      String?
+  updateFrequency String? // daily, weekly, manual
+  lastSync    DateTime?
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  products Product[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([storeId, cnpj])
+}
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+  price     Decimal  @db.Decimal(10, 2)
+  cost      Decimal? @db.Decimal(10, 2)
+  reason    String?  // manual, supplier_update, promotion, etc
+  
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@index([productId, createdAt])
+}
+
+model Reminder {
+  id          String        @id @default(cuid())
+  title       String
+  description String?       @db.Text
+  dueDate     DateTime
+  status      ReminderStatus @default(PENDING)
+  type        ReminderType  @default(GENERAL)
+  
+  // Configuração de notificação
+  notifyBefore Int? // minutos antes
+  notifyMethod NotifyMethod @default(WHATSAPP)
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  messageReminders MessageReminder[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([storeId, dueDate])
+  @@index([status])
+}
+
+model MessageReminder {
+  id        String @id @default(cuid())
+  
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  reminderId String
+  reminder   Reminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([messageId, reminderId])
+}
+
+model Report {
+  id          String     @id @default(cuid())
+  name        String
+  type        ReportType
+  period      String     // daily, weekly, monthly
+  format      String     // pdf, excel
+  content     Json?      // Dados do relatório
+  filePath    String?    // Caminho do arquivo gerado
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@index([storeId, type])
+}
+
+model Automation {
+  id          String         @id @default(cuid())
+  name        String
+  type        AutomationType
+  active      Boolean        @default(true)
+  schedule    String?        // Cron expression
+  config      Json          // Configurações específicas
+  lastRun     DateTime?
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([storeId, active])
+}
+
+model StoreSetting {
+  id    String @id @default(cuid())
+  key   String
+  value String @db.Text
+  
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([storeId, key])
+}
+
+// Enums
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum Plan {
+  BASIC
+  PREMIUM
+  ENTERPRISE
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  LOCATION
+  CONTACT
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  RECEIVED
+  PENDING
+  PROCESSED
+  RESPONDED
+  ARCHIVED
+}
+
+enum ReminderStatus {
+  PENDING
+  NOTIFIED
+  COMPLETED
+  CANCELLED
+}
+
+enum ReminderType {
+  GENERAL
+  PAYMENT
+  DELIVERY
+  MEETING
+  FOLLOW_UP
+}
+
+enum NotifyMethod {
+  WHATSAPP
+  EMAIL
+  BOTH
+}
+
+enum ReportType {
+  MESSAGES
+  PRODUCTS
+  SUPPLIERS
+  FINANCIAL
+  ACTIVITY
+}
+
+enum AutomationType {
+  DAILY_SUMMARY
+  WEEKLY_SUMMARY
+  PRICE_UPDATE
+  STOCK_ALERT
+  REMINDER_CHECK
+}
+
+enum EvolutionStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  ERROR
+  QRCODE_PENDING
+}
